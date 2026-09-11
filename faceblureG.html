@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Анонимизатор Фото</title>
+    <!-- Подключаем библиотеку для поиска лиц -->
+    <script defer src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1/dist/face-api.js"></script>
+    
+    <style>
+        /* iOS Style CSS */
+        :root {
+            --bg-color: #f2f2f7;
+            --card-bg: #ffffff;
+            --text-main: #000000;
+            --text-muted: #8e8e93;
+            --accent: #007aff;
+            --accent-hover: #005bb5;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg-color: #000000;
+                --card-bg: #1c1c1e;
+                --text-main: #ffffff;
+                --text-muted: #ebebf599;
+                --accent: #0a84ff;
+            }
+        }
+
+        * {
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 500px;
+            background-color: var(--card-bg);
+            border-radius: 20px;
+            padding: 24px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.05);
+            text-align: center;
+            margin-top: 20px;
+        }
+
+        h1 {
+            font-size: 24px;
+            font-weight: 600;
+            margin-top: 0;
+            margin-bottom: 8px;
+        }
+
+        p.subtitle {
+            color: var(--text-muted);
+            font-size: 14px;
+            margin-bottom: 24px;
+            line-height: 1.4;
+        }
+
+        .upload-btn, .download-btn {
+            display: inline-block;
+            width: 100%;
+            padding: 16px;
+            border-radius: 14px;
+            font-size: 17px;
+            font-weight: 600;
+            text-align: center;
+            cursor: pointer;
+            transition: opacity 0.2s;
+            border: none;
+        }
+
+        .upload-btn {
+            background-color: var(--accent);
+            color: #fff;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .upload-btn:active, .download-btn:active {
+            opacity: 0.7;
+        }
+
+        .upload-btn input[type="file"] {
+            position: absolute;
+            top: 0; right: 0; bottom: 0; left: 0;
+            opacity: 0;
+            cursor: pointer;
+            width: 100%;
+        }
+
+        .download-btn {
+            background-color: #34c759;
+            color: #fff;
+            margin-top: 16px;
+            display: none; /* Скрыто до обработки */
+            text-decoration: none;
+        }
+
+        .image-preview-container {
+            margin-top: 24px;
+            width: 100%;
+            border-radius: 12px;
+            overflow: hidden;
+            display: none;
+            background: #000;
+        }
+
+        #outputImage {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+
+        /* Индикатор загрузки */
+        .status {
+            margin-top: 16px;
+            font-size: 14px;
+            color: var(--text-muted);
+            font-weight: 500;
+        }
+
+        .loader {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(0, 122, 255, 0.3);
+            border-radius: 50%;
+            border-top-color: var(--accent);
+            animation: spin 1s ease-in-out infinite;
+            vertical-align: middle;
+            margin-right: 8px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Скрытый канвас для обработки */
+        #processingCanvas {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>Безопасное фото</h1>
+        <p class="subtitle">ИИ замажет лица прямо на вашем устройстве. Фото никуда не отправляется, а все скрытые данные (геолокация) удаляются.</p>
+
+        <div id="loadingAI" class="status">
+            <div class="loader"></div> Настройка ИИ... (около 2-3 МБ)
+        </div>
+
+        <div id="appControls" style="display: none;">
+            <label class="upload-btn">
+                Выбрать фото
+                <input type="file" id="imageInput" accept="image/jpeg, image/png, image/webp" />
+            </label>
+
+            <div id="processingStatus" class="status" style="display: none;">
+                <div class="loader"></div> Ищем лица...
+            </div>
+        </div>
+
+        <div class="image-preview-container" id="previewContainer">
+            <img id="outputImage" alt="Результат" />
+        </div>
+
+        <a id="downloadBtn" class="download-btn" download="safe_photo.jpg">Сохранить фото</a>
+    </div>
+
+    <canvas id="processingCanvas"></canvas>
+
+    <script>
+        // Ссылки на DOM элементы
+        const imageInput = document.getElementById('imageInput');
+        const processingCanvas = document.getElementById('processingCanvas');
+        const ctx = processingCanvas.getContext('2d');
+        const outputImage = document.getElementById('outputImage');
+        const previewContainer = document.getElementById('previewContainer');
+        const downloadBtn = document.getElementById('downloadBtn');
+        
+        const loadingAI = document.getElementById('loadingAI');
+        const appControls = document.getElementById('appControls');
+        const processingStatus = document.getElementById('processingStatus');
+
+        // Инициализация Face API при загрузке страницы
+        async function initAI() {
+            try {
+                // Загружаем легковесные модели (tinyFaceDetector) с публичного CDN
+                const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1/model/';
+                await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
+                
+                // ИИ готов к работе
+                loadingAI.style.display = 'none';
+                appControls.style.display = 'block';
+            } catch (error) {
+                loadingAI.innerHTML = '❌ Ошибка загрузки ИИ. Проверьте интернет.';
+                console.error(error);
+            }
+        }
+
+        // Обработка выбранного изображения
+        imageInput.addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            // Скрываем старый результат, показываем загрузку
+            previewContainer.style.display = 'none';
+            downloadBtn.style.display = 'none';
+            processingStatus.style.display = 'block';
+
+            // Читаем файл как картинку
+            const img = await faceapi.bufferToImage(file);
+            
+            // Настраиваем скрытый холст (Canvas) под размер фото
+            processingCanvas.width = img.width;
+            processingCanvas.height = img.height;
+            
+            // Рисуем оригинальное фото на холсте
+            ctx.drawImage(img, 0, 0);
+
+            // Ищем лица с помощью ИИ
+            const detections = await faceapi.detectAllFaces(img, new faceapi.TinyFaceDetectorOptions({
+                inputSize: 416, // Баланс между скоростью и качеством на мобильных
+                scoreThreshold: 0.4
+            }));
+
+            // Проходим по каждому найденному лицу
+            for (const detection of detections) {
+                const box = detection.box;
+                
+                // Делаем область замазывания чуть больше самого лица (на 10%)
+                const expandX = box.width * 0.1;
+                const expandY = box.height * 0.1;
+                
+                const x = box.x - expandX;
+                const y = box.y - expandY;
+                const width = box.width + (expandX * 2);
+                const height = box.height + (expandY * 2);
+
+                // Сохраняем состояние контекста
+                ctx.save();
+                
+                // Вырезаем овальную область лица
+                ctx.beginPath();
+                ctx.ellipse(
+                    x + width / 2, 
+                    y + height / 2, 
+                    width / 2, 
+                    height / 2, 
+                    0, 0, 2 * Math.PI
+                );
+                ctx.clip(); // Ограничиваем рисование этим овалом
+
+                // Применяем сильное размытие (Blur в стиле iOS)
+                // Для больших фото радиус размытия должен быть больше
+                const blurRadius = Math.max(15, img.width * 0.02);
+                ctx.filter = `blur(${blurRadius}px)`;
+
+                // Перерисовываем картинку, но благодаря clip() размоется только лицо
+                ctx.drawImage(img, 0, 0);
+                
+                // Возвращаем настройки (убираем blur для следующего лица)
+                ctx.restore();
+            }
+
+            // Конвертируем холст в готовое изображение (формат JPEG)
+            // В этот момент автоматически удаляются все EXIF метаданные!
+            const safeDataUrl = processingCanvas.toDataURL('image/jpeg', 0.90);
+
+            // Показываем результат пользователю
+            outputImage.src = safeDataUrl;
+            previewContainer.style.display = 'block';
+            
+            // Настраиваем кнопку скачивания
+            downloadBtn.href = safeDataUrl;
+            // Добавляем случайное имя файлу, чтобы не путать
+            downloadBtn.download = `safe_photo_${Math.floor(Date.now() / 1000)}.jpg`;
+            downloadBtn.style.display = 'block';
+
+            processingStatus.style.display = 'none';
+        });
+
+        // Запускаем загрузку моделей при открытии
+        window.addEventListener('load', initAI);
+    </script>
+</body>
+</html>
